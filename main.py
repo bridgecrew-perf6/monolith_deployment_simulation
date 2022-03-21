@@ -217,8 +217,8 @@ class QueuePipeline:
 
             # good item takes...
             self.total_time += self.test_time + self.deploy_time  # just need to run test once and deploy once automatically
-            self.total_resource_time += self.merge_time * len(items)  # total resource time is just spent to keep dev branch up to date with master
-
+            self.total_resource_time += self.merge_time * len(
+                good_commits)  # total resource time is just spent to keep dev branch up to date with master
 
         print("total bad", total_bad)
         self.avg_resource_time_per_commit = self.total_resource_time / total_processed
@@ -227,19 +227,31 @@ class QueuePipeline:
 
 def main():
     commits = []
-    g = CommitGenerator(0.6, 40)
+    commit_success_rate = 0.6
+    commit_fix_time = 100
+    g = CommitGenerator(commit_success_rate, commit_fix_time)
     for _ in range(10000):
         commits.append(g.get())
-    ps = SerialPipeline(20, 10, 10, 5, commits)
+    test_time = 20
+    build_and_deploy_time = 10
+    idle_time = 10
+    merge_time = 5
+    train_size = 5
+    queue_size = 5
+    merge_back_time_per_commit = 5
+    debugging_complexity_coef_per_commit = 0.5
+
+    ps = SerialPipeline(test_time, build_and_deploy_time, idle_time, merge_time, commits)
     ps.generate_report()
-    # prt1 = ReleaseTrainPipelineTestPerMerge(20, 10, commits, 5, 10)
-    prt1 = ReleaseTrainPipelineTestPerMerge(20, 10, 10, 5, commits, 5, 5)
+    prt1 = ReleaseTrainPipelineTestPerMerge(test_time, build_and_deploy_time, idle_time, merge_time, commits,
+                                            train_size, merge_back_time_per_commit)
     prt1.generate_report()
-    prt2 = ReleaseTrainPipelineTestOnce(20, 10, 10, 5, commits, 5, 5, 0.5)
+    prt2 = ReleaseTrainPipelineTestOnce(test_time, build_and_deploy_time, idle_time, merge_time, commits, train_size,
+                                        merge_back_time_per_commit, debugging_complexity_coef_per_commit)
     prt2.generate_report()
-    qp = QueuePipeline(20,10,commits,5,5)
+    qp = QueuePipeline(test_time, build_and_deploy_time, commits, queue_size, merge_time)
     qp.generate_report()
-    pipeline_reports = [ps, prt1, prt2,qp]
+    pipeline_reports = [ps, prt1, prt2, qp]
     for p in pipeline_reports:
         print(p.name())
         print(f"total time  {p.total_time}")
