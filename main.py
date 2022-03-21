@@ -228,11 +228,12 @@ class QueuePipeline:
 def main():
     commits = []
     commit_success_rate = 0.6
-    commit_fix_time = 100
+    test_time = 15
+    commit_fix_rate = 5 # assume it takes 5 fixes to get to a good state
+    commit_fix_time = (test_time + 5) * commit_fix_rate # assume it takes 5 minutes to update code and retrigger test
     g = CommitGenerator(commit_success_rate, commit_fix_time)
     for _ in range(10000):
         commits.append(g.get())
-    test_time = 20
     build_and_deploy_time = 10
     idle_time = 10
     merge_time = 5
