@@ -115,10 +115,13 @@ class CommitGenerator:
 
 
 class BuildPipelineReport:
-    def __init__(self, name, avg_build_time, avg_resource_time):
+    def __init__(self, name, avg_build_time, avg_resource_time, batch_time=0):
         self.avg_resource_time = avg_resource_time
         self.avg_build_time = avg_build_time
         self.name = name
+        self.batch_time = batch_time
+        if not batch_time:
+            self.batch_time = avg_build_time
 
 
 class SerialPipeline:
@@ -186,99 +189,141 @@ class SerialPipeline:
                                    total_resource_time / len(builds_history))
 
 
-class ReleaseTrainPipelineTestPerMerge:
-    def __init__(self, test_time, deploy_time, idle_time_avg, merge_time, commits, train_size,
-                 merge_back_time_per_commit):
-        self.test_time = test_time
-        self.deploy_time = deploy_time
-        self.commits = commits
-        self.merge_time = merge_time
-        self.train_size = train_size
-        self.idle_time = np.random.normal(idle_time_avg,
-                                          idle_time_avg / 2)  # time where devs are not available. however still in queue
-        self.total_time = 0
-        self.total_resource_time = 0
-        self.merge_back_time_per_commit = merge_back_time_per_commit
-        self.avg_time_per_commit = None
-        self.avg_resource_time_per_commit = None
-
-    def name(self):
-        return "ReleaseTrainPipelineTestPerMerge"
-
-    def generate_report(self):
-        for idx, commit in enumerate(self.commits):
-            if isinstance(commit, FaultyCommit):
-                self.total_time += (
-                        commit.get_time_to_fix() + self.test_time + self.idle_time + self.merge_time)  # if faulty commit, total time it takes is the fix + test + deploy
-                self.total_resource_time += (
-                        commit.get_time_to_fix() * 2 + self.merge_time)  # multiply the time to fix with QA time since they will be involved as well
-            else:
-                self.total_time += (self.test_time + self.idle_time + self.merge_time)
-                self.total_resource_time += self.merge_time
-
-            # every train deployment, need to do the merge back and deploy
-            if idx % self.train_size == 0:
-                self.total_resource_time += self.merge_back_time_per_commit * self.train_size
-                self.total_resource_time += self.deploy_time
-
-                self.total_time += self.merge_back_time_per_commit * self.train_size
-                self.total_time += self.deploy_time
-
-        self.avg_resource_time_per_commit = self.total_resource_time / len(self.commits)
-        self.avg_time_per_commit = self.total_time / len(self.commits)
+# ignore this model for now
+# class ReleaseTrainPipelineTestPerMerge:
+#     def __init__(self, test_time, deploy_time, idle_time_avg, merge_time, commits, train_size,
+#                  merge_back_time_per_commit):
+#         self.test_time = test_time
+#         self.deploy_time = deploy_time
+#         self.commits = commits
+#         self.merge_time = merge_time
+#         self.train_size = train_size
+#         self.idle_time = np.random.normal(idle_time_avg,
+#                                           idle_time_avg / 2)  # time where devs are not available. however still in queue
+#         self.total_time = 0
+#         self.total_resource_time = 0
+#         self.merge_back_time_per_commit = merge_back_time_per_commit
+#         self.avg_time_per_commit = None
+#         self.avg_resource_time_per_commit = None
+#
+#     def name(self):
+#         return "ReleaseTrainPipelineTestPerMerge"
+#
+#     def generate_report(self):
+#         for idx, commit in enumerate(self.commits):
+#             if isinstance(commit, FaultyCommit):
+#                 self.total_time += (
+#                         commit.get_time_to_fix() + self.test_time + self.idle_time + self.merge_time)  # if faulty commit, total time it takes is the fix + test + deploy
+#                 self.total_resource_time += (
+#                         commit.get_time_to_fix() * 2 + self.merge_time)  # multiply the time to fix with QA time since they will be involved as well
+#             else:
+#                 self.total_time += (self.test_time + self.idle_time + self.merge_time)
+#                 self.total_resource_time += self.merge_time
+#
+#             # every train deployment, need to do the merge back and deploy
+#             if idx % self.train_size == 0:
+#                 self.total_resource_time += self.merge_back_time_per_commit * self.train_size
+#                 self.total_resource_time += self.deploy_time
+#
+#                 self.total_time += self.merge_back_time_per_commit * self.train_size
+#                 self.total_time += self.deploy_time
+#
+#         self.avg_resource_time_per_commit = self.total_resource_time / len(self.commits)
+#         self.avg_time_per_commit = self.total_time / len(self.commits)
 
 
 class ReleaseTrainPipelineTestOnce:
-    def __init__(self, test_time, deploy_time, idle_time_avg, merge_time, commits, train_size,
-                 merge_back_time_per_commit, trouble_shooting_complexity_coef):
-        self.test_time = test_time
+    def __init__(self,
+                 unit_test_time,
+                 integration_test_time,
+                 unit_test_flakiness,
+                 integration_test_flakiness,
+                 deploy_time,
+                 idle_time_avg,
+                 sync_branches_time,
+                 commits, train_size,
+                 trouble_shooting_complexity_coef):
+        self.sync_branches_time = sync_branches_time
+        self.integration_test_flakiness = integration_test_flakiness
+        self.unit_test_flakiness = unit_test_flakiness
+        self.integration_test_time = integration_test_time
+        self.unit_test_time = unit_test_time
         self.deploy_time = deploy_time
         self.commits = commits
-        self.merge_time = merge_time
         self.train_size = train_size
         self.trouble_shooting_coef = trouble_shooting_complexity_coef
-        self.idle_time = np.random.normal(idle_time_avg,
-                                          idle_time_avg / 2)  # time where devs are not available. however still in queue
-        self.total_time = 0
-        self.total_resource_time = 0
-        self.merge_back_time_per_commit = merge_back_time_per_commit
-        self.avg_time_per_commit = None
-        self.avg_resource_time_per_commit = None
+        self.idle_time = lambda: np.random.normal(idle_time_avg,
+                                                  idle_time_avg / 2)  # time where devs are not available. however still in queue
+        self.run_history = []
 
     def name(self):
         return "ReleaseTrainPipelineTestOnce"
 
+    def execute_single_batch(self, commits, combined_complexity_coef):
+        # for a single batch, the devs would merge all to the train branch and hopefully nothing breaks
+        max_fix_time = 0
+        total_bugs = 0
+        total_hidden_bugs = 0
+        # combine commits into a single merge commit
+        for commit in commits:
+            total_bugs += round(commit.number_of_bugs)
+            total_hidden_bugs += round(commit.hidden_bugs)
+            max_fix_time = max(commit.fix_time, max_fix_time)
+
+        merged_commit = Commit(uuid.uuid4(), hidden_bugs=total_hidden_bugs,
+                               fix_time=max_fix_time * combined_complexity_coef * len(commits), bugs=total_bugs)
+
+        # create a new representation of the build for the merged commit
+
+        build = Build(commit=merged_commit, unit_test_duration=self.unit_test_time,
+                      integration_test_duration=self.integration_test_time,
+                      unit_test_flakiness=self.unit_test_flakiness,
+                      integration_test_flakiness=self.integration_test_flakiness, deploy_duration=self.deploy_time)
+        for _ in commits:
+            # before starting, the developer might be idle
+            build.idle(self.idle_time())
+            # after idling, the developer needs to sync branches with each other
+            build.sync_branches(self.sync_branches_time)
+
+        # merged commits together at this point
+
+        # run unit tests
+        unit_test_success = build.unit_test()
+        while not unit_test_success:
+            build.fix()  # developer will fix the problems themselves
+            unit_test_success = build.unit_test()
+        # once successful, merge with master and run integration tests
+        integration_test_success = build.integration_test()
+        while not integration_test_success:
+            build.fix(1 + len(commits))  # all the devs on the train + QA will troubleshoot integration test together
+            integration_test_success = build.integration_test()
+            build.idle(self.idle_time())  # dev probably idle while waiting for the integration test to pass
+        build.deploy()
+        return build
+
+    def run(self):
+        if self.run_history:
+            return self.run_history
+        trains = np.reshape(self.commits, (-1, self.train_size))
+        for train in trains:
+            build = self.execute_single_batch(train, self.trouble_shooting_coef)
+            self.run_history.append(build)
+        return self.run_history
+
     def generate_report(self):
-        has_error = False
-        time_to_fix = 0
-        for idx, commit in enumerate(self.commits):
-            if isinstance(commit, FaultyCommit):
-                has_error = True
-                time_to_fix = max(commit.get_time_to_fix(), time_to_fix)
-            if idx % self.train_size == 0:
-                if has_error:
-                    self.total_time += (
-                        # assumption that bulk trouble shooting is more complex than individual commit fixes, that it would be self.trainsize/2 more complex
-                            time_to_fix * (
-                            self.train_size * self.trouble_shooting_coef) + self.test_time + (
-                                    self.idle_time + self.merge_time) * self.train_size)  # if faulty commit, total time it takes is the fix + test + deploy
-                    self.total_resource_time += (
-                        # assuming all the devs involved wit the train needs to help out in solving the problem.
-                            time_to_fix * (
-                            self.train_size + 1) * self.trouble_shooting_coef + self.merge_time * self.train_size)  # multiply the time to fix with QA + other devs since they will be involved as well
-                else:
-                    self.total_time += self.test_time + (self.idle_time + self.merge_time) * self.train_size
-                    self.total_resource_time += self.merge_time * self.train_size
-
-                self.total_resource_time += self.merge_back_time_per_commit * self.train_size
-                self.total_resource_time += self.deploy_time
-
-                self.total_time += self.merge_back_time_per_commit * self.train_size
-                self.total_time += self.deploy_time
-                has_error = False
-
-        self.avg_resource_time_per_commit = self.total_resource_time / len(self.commits)
-        self.avg_time_per_commit = self.total_time / len(self.commits)
+        builds_history = self.run()
+        total_time = 0
+        total_resource_time = 0
+        for batch in builds_history:
+            for history in batch.get_history():
+                total_time += history.duration
+                if history.action in [BuildHistory.FIXED, BuildHistory.DEPLOYED, BuildHistory.SYNCED_BRANCHES]:
+                    total_resource_time += history.duration * history.resource
+        avg_time_per_commit = total_time / len(builds_history) / self.train_size
+        avg_resource_time_per_commit = total_resource_time / len(builds_history) / self.train_size
+        avg_train_time = total_time / len(builds_history)
+        return BuildPipelineReport(self.name(), avg_build_time=avg_time_per_commit, batch_time=avg_train_time,
+                                   avg_resource_time=avg_resource_time_per_commit)
 
 
 class QueuePipeline:
@@ -347,8 +392,7 @@ def main():
     merge_time = 5
     train_size = 5
     queue_size = 5
-    merge_back_time_per_commit = 5
-    debugging_complexity_coef_per_commit = 0.5
+    debugging_complexity_coef_per_commit = 1.5
 
     ps = SerialPipeline(unit_test_flakiness=unit_test_flakiness,
                         integration_test_flakiness=integration_test_flakiness,
@@ -357,11 +401,21 @@ def main():
                         commits=commits)
     serial_pipline_report = ps.generate_report()
 
-    pipeline_reports = [serial_pipline_report]
+    rt = ReleaseTrainPipelineTestOnce(
+        train_size=train_size,
+        unit_test_flakiness=unit_test_flakiness,
+        integration_test_flakiness=integration_test_flakiness,
+        integration_test_time=integration_test_time, unit_test_time=unit_test_time,
+        deploy_time=deploy_time, idle_time_avg=idle_time, sync_branches_time=merge_time,
+        commits=commits, trouble_shooting_complexity_coef=debugging_complexity_coef_per_commit,
+    )
+    release_train_report = rt.generate_report()
+    pipeline_reports = [serial_pipline_report, release_train_report]
     for p in pipeline_reports:
         print(p.name)
         print(f"avg time per commit  {p.avg_build_time}")
         print(f"avg resource time per commit  {p.avg_resource_time}")
+        print(f"avg time per batch  {p.batch_time}")
         print("------------")
         # prt1 = ReleaseTrainPipelineTestPerMerge(test_time, build_and_deploy_time, idle_time, merge_time, commits,
         #                                         train_size, merge_back_time_per_commit)
