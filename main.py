@@ -4,78 +4,186 @@ import uuid
 
 
 class Commit:
-    def __init__(self, commit_id):
+    # bug chance represent how likely the bug is not caught when it is going to deploy
+    def __init__(self, commit_id, bugs, hidden_bugs, fix_time):
         self.commit_id = commit_id
+        self.number_of_bugs = bugs
+        self.hidden_bugs = hidden_bugs
+        self.fix_time = fix_time
+
+    def has_bug(self):
+        return self.number_of_bugs > 1
+
+    def fix(self):
+        if self.number_of_bugs > 1:
+            self.number_of_bugs -= 1
+            return self.fix_time
+        if self.hidden_bugs > 1:
+            self.hidden_bugs -= 1
+        return self.fix_time
+
+    def has_hidden_bug(self):
+        return self.hidden_bugs > 1
 
 
-class FaultyCommit:
-    def __init__(self, uid, time_to_fix):
-        self.id = uid
-        self.time_to_fix = time_to_fix
-        # self.devs_needed = devs_needed
-        # self.qa_needed = qa_needed
+class BuildHistory:
+    STARTED = "STARTED"
+    UNIT_TESTED = "UNIT_TESTED"
+    INTEGRATION_TESTED = "INTEGRATION_TESTED"
+    SYNCED_BRANCHES = "SYNCED_BRANCHES"
+    DEPLOYED = "DEPLOYED"
+    IDLED = "IDLED"
+    FIXED = "FIXED"
 
-    def get_time_to_fix(self):
-        return self.time_to_fix
+    def __init__(self, action, duration, resource=1):
+        self.action = action
+        self.duration = duration
+        self.resource = resource
 
-    # def get_resources_spent(self):
-    #     return self.time_to_fix * (self.devs_needed + self.qa_needed)
+
+class Build:
+    def __init__(self, commit, unit_test_duration, integration_test_duration, unit_test_flakiness,
+                 integration_test_flakiness, deploy_duration):
+        self.commit = commit
+        self.unit_test_flakiness = unit_test_flakiness
+        self.integration_test_flakiness = integration_test_flakiness
+        self.unit_test_duration = unit_test_duration
+        self.integration_test_duration = integration_test_duration
+        self.deploy_duration = deploy_duration
+        self.history = [BuildHistory(BuildHistory.STARTED, 0)]
+        self.completed = False
+        self.unit_test_passed = False
+        self.integration_test_passed = False
+
+    def unit_test(self):
+        self.history.append(BuildHistory(BuildHistory.UNIT_TESTED, self.unit_test_duration))
+        if random() < self.unit_test_flakiness:
+            return False
+        if self.commit.has_bug():
+            return False
+        self.unit_test_passed = True
+        return True
+
+    def integration_test(self):
+        self.history.append(BuildHistory(BuildHistory.INTEGRATION_TESTED, self.integration_test_duration))
+        if random() < self.integration_test_flakiness:
+            return False
+        if self.commit.has_hidden_bug():
+            return False
+        self.integration_test_passed = True
+        return True
+
+    def sync_branches(self, duration):
+        self.history.append(BuildHistory(BuildHistory.SYNCED_BRANCHES, duration))
+
+    def deploy(self):
+        if self.unit_test_passed and self.integration_test_passed:
+            self.completed = True
+            return self.history.append(BuildHistory(BuildHistory.DEPLOYED, self.deploy_duration))
+        raise Exception("cannot deploy if unit test and integration are not passed")
+
+    def idle(self, duration):
+        self.history.append(BuildHistory(BuildHistory.IDLED, duration))
+
+    def fix(self, resources=1):
+        fix_duration = self.commit.fix()
+        self.history.append(BuildHistory(BuildHistory.FIXED, fix_duration, resources))
+
+    def get_history(self):
+        return self.history
 
 
 class CommitGenerator:
-    def __init__(self, faulty_percentage, time_to_fix_min):
-        self.faulty_percentage = faulty_percentage
-        self.time_to_fix_min = time_to_fix_min
-        # self.standard_deviation = time_to_fix_avg / 2
-        # assumption that std is 1/2 of its mean, which means 68% probability to have time to fix between  time_to_fix_avg/2 and time_to_fix_avg*3/2
+    def __init__(self, bug_chance, test_coverage, avg_lines_of_code, bug_chance_per_line_of_code,
+                 fix_time_per_lines_of_code):
+        self.bug_chance = bug_chance
+        self.test_coverage = test_coverage
+        self.avg_lines_of_code = avg_lines_of_code
+        self.bug_chance_per_line_of_code = bug_chance_per_line_of_code
+        self.fix_time_per_lines_of_code = fix_time_per_lines_of_code
 
     def get(self):
-        uid = uuid.uuid4()
-        if random() > self.faulty_percentage:
-            # t = np.random.normal(self.time_to_fix_mean, self.standard_deviation)
-            t = self._time_to_fix_gen()
-            return FaultyCommit(uid, t)
-        return Commit(uid)
+        lines_of_code = np.random.normal(self.avg_lines_of_code, self.avg_lines_of_code / 2)
+        number_of_bugs = lines_of_code * self.bug_chance_per_line_of_code
+        hidden_bug = number_of_bugs * (1 - self.test_coverage)
+        fix_time = max(self.fix_time_per_lines_of_code * lines_of_code, 1)  # takes at least 1 min to fix
+        if random() > self.bug_chance:
+            number_of_bugs = hidden_bug = 0
 
-    # use a simpler generator func rather than standard deviation since time to fix is unlikely to go below avg.
-    def _time_to_fix_gen(self):
-        rand = random()
-        if rand > 0.9:  # 10% chance takes more than 3 times than min
-            return self.time_to_fix_min * 3
-        elif rand > 0.8:  # 20 % chance takes more than 2 times than min
-            return self.time_to_fix_min * 2
-        return self.time_to_fix_min
+        uid = uuid.uuid4()
+        return Commit(uid, hidden_bugs=hidden_bug, bugs=number_of_bugs, fix_time=fix_time)
+
+
+class BuildPipelineReport:
+    def __init__(self, name, avg_build_time, avg_resource_time):
+        self.avg_resource_time = avg_resource_time
+        self.avg_build_time = avg_build_time
+        self.name = name
 
 
 class SerialPipeline:
-    def __init__(self, test_time, deploy_time, idle_time_avg, merge_time, commits):
-        self.test_time = test_time
+    def __init__(self, unit_test_time, integration_test_time, unit_test_flakiness, integration_test_flakiness,
+                 deploy_time, idle_time_avg, sync_branches_time, commits):
+        self.unit_test_time = unit_test_time
+        self.integration_test_time = integration_test_time
+        self.unit_test_flakiness = unit_test_flakiness
+        self.integration_test_flakiness = integration_test_flakiness
         self.deploy_time = deploy_time
         self.commits = commits
-        self.merge_time = merge_time
-        self.idle_time = np.random.normal(idle_time_avg,
-                                          idle_time_avg / 2)  # time where devs are not available. however still in queue
+        self.sync_branches_time = sync_branches_time
+        self.idle_time = lambda: np.random.normal(idle_time_avg,
+                                                  idle_time_avg / 2)  # time where devs are not available. however still in queue
         self.total_time = 0
         self.total_resource_time = 0
         self.avg_time_per_commit = None
         self.avg_resource_time_per_commit = None
+        self.run_history = []
 
     def name(self):
         return "SerialPipeline"
 
-    def generate_report(self):
-        for commit in self.commits:
-            if isinstance(commit, FaultyCommit):
-                self.total_time += (
-                        commit.get_time_to_fix() + self.test_time + self.deploy_time + self.idle_time + self.merge_time)  # if faulty commit, total time it takes is the fix + test + deploy
-                self.total_resource_time += (
-                        commit.get_time_to_fix() * 2 + self.deploy_time + self.merge_time)  # multiply the time to fix with QA time since they will be involved as well
-            else:
-                self.total_time += (self.test_time + self.deploy_time + self.idle_time + self.merge_time)
-                self.total_resource_time += self.deploy_time + self.merge_time
+    def execute_single_commit(self, commit):
+        build = Build(commit=commit, unit_test_duration=self.unit_test_time,
+                      integration_test_duration=self.integration_test_time,
+                      unit_test_flakiness=self.unit_test_flakiness,
+                      integration_test_flakiness=self.integration_test_flakiness, deploy_duration=self.deploy_time)
+        # before starting, the developer might be idle
+        build.idle(self.idle_time())
+        # after idling, the developer needs to sync branches with master
+        build.sync_branches(self.sync_branches_time)
+        # after syncing with master, run unit tests
+        unit_test_success = build.unit_test()
+        while not unit_test_success:
+            build.fix()  # developer will fix the problems themselves
+            unit_test_success = build.unit_test()
+        # once successful, merge with master and run integration tests
+        integration_test_success = build.integration_test()
+        while not integration_test_success:
+            build.fix(1 + 1)  # dev + QA will troubleshoot integration test together
+            integration_test_success = build.integration_test()
+        build.idle(self.idle_time())  # dev probably idle while waiting for the integration test to pass
+        build.deploy()
+        return build
 
-        self.avg_resource_time_per_commit = self.total_resource_time / len(self.commits)
-        self.avg_time_per_commit = self.total_time / len(self.commits)
+    def run(self):
+        if self.run_history:
+            return self.run_history
+        for commit in self.commits:
+            build = self.execute_single_commit(commit)
+            self.run_history.append(build)
+        return self.run_history
+
+    def generate_report(self):
+        builds_history = self.run()
+        total_time = 0
+        total_resource_time = 0
+        for build in builds_history:
+            for history in build.get_history():
+                total_time += history.duration
+                if history.action in [BuildHistory.FIXED, BuildHistory.DEPLOYED, BuildHistory.SYNCED_BRANCHES]:
+                    total_resource_time += history.duration * history.resource
+        return BuildPipelineReport(self.name(), total_time / len(builds_history),
+                                   total_resource_time / len(builds_history))
 
 
 class ReleaseTrainPipelineTestPerMerge:
@@ -193,7 +301,6 @@ class QueuePipeline:
         # divide up the commits into queues
         self.queue = np.reshape(self.commits, (-1, self.queue_size))
         total_processed = 0
-        total_bad = 0
         for items in self.queue:
             # scan the item from the first to last, stop when the queue has a bad commit
             bad_idx = None
@@ -204,7 +311,6 @@ class QueuePipeline:
                     break
             good_commits = items
             if bad_idx is not None:
-                total_bad += 1
                 total_processed += 1
                 good_commits = good_commits[:bad_idx]
             total_processed += len(good_commits)
@@ -220,46 +326,60 @@ class QueuePipeline:
             self.total_resource_time += self.merge_time * len(
                 good_commits)  # total resource time is just spent to keep dev branch up to date with master
 
-        print("total bad", total_bad)
         self.avg_resource_time_per_commit = self.total_resource_time / total_processed
         self.avg_time_per_commit = self.total_time / total_processed
 
 
 def main():
     commits = []
-    commit_success_rate = 0.6
-    test_time = 15
-    commit_fix_rate = 5 # assume it takes 5 fixes to get to a good state
-    commit_fix_time = (test_time + 5) * commit_fix_rate # assume it takes 5 minutes to update code and retrigger test
-    g = CommitGenerator(commit_success_rate, commit_fix_time)
+    g = CommitGenerator(bug_chance=0.1, bug_chance_per_line_of_code=1 / 200, avg_lines_of_code=500,
+                        fix_time_per_lines_of_code=5 / 200, test_coverage=0.8)
     for _ in range(10000):
         commits.append(g.get())
-    build_and_deploy_time = 10
-    idle_time = 10
+
+    deploy_time = 10
+    unit_test_flakiness = 0.1
+    integration_test_flakiness = 0.2
+    integration_test_time = 20
+    unit_test_time = 10
+
+    idle_time = 5
     merge_time = 5
     train_size = 5
     queue_size = 5
     merge_back_time_per_commit = 5
     debugging_complexity_coef_per_commit = 0.5
 
-    ps = SerialPipeline(test_time, build_and_deploy_time, idle_time, merge_time, commits)
-    ps.generate_report()
-    prt1 = ReleaseTrainPipelineTestPerMerge(test_time, build_and_deploy_time, idle_time, merge_time, commits,
-                                            train_size, merge_back_time_per_commit)
-    prt1.generate_report()
-    prt2 = ReleaseTrainPipelineTestOnce(test_time, build_and_deploy_time, idle_time, merge_time, commits, train_size,
-                                        merge_back_time_per_commit, debugging_complexity_coef_per_commit)
-    prt2.generate_report()
-    qp = QueuePipeline(test_time, build_and_deploy_time, commits, queue_size, merge_time)
-    qp.generate_report()
-    pipeline_reports = [ps, prt1, prt2, qp]
+    ps = SerialPipeline(unit_test_flakiness=unit_test_flakiness,
+                        integration_test_flakiness=integration_test_flakiness,
+                        integration_test_time=integration_test_time, unit_test_time=unit_test_time,
+                        deploy_time=deploy_time, idle_time_avg=idle_time, sync_branches_time=merge_time,
+                        commits=commits)
+    serial_pipline_report = ps.generate_report()
+
+    pipeline_reports = [serial_pipline_report]
     for p in pipeline_reports:
-        print(p.name())
-        print(f"total time  {p.total_time}")
-        print(f"total resource time  {p.total_resource_time}")
-        print(f"avg time per commit  {p.avg_time_per_commit}")
-        print(f"avg resource time per commit  {p.avg_resource_time_per_commit}")
+        print(p.name)
+        print(f"avg time per commit  {p.avg_build_time}")
+        print(f"avg resource time per commit  {p.avg_resource_time}")
         print("------------")
+        # prt1 = ReleaseTrainPipelineTestPerMerge(test_time, build_and_deploy_time, idle_time, merge_time, commits,
+        #                                         train_size, merge_back_time_per_commit)
+        # prt1.generate_report()
+        # prt2 = ReleaseTrainPipelineTestOnce(test_time, build_and_deploy_time, idle_time, merge_time, commits,
+        #                                     train_size,
+        #                                     merge_back_time_per_commit, debugging_complexity_coef_per_commit)
+        # prt2.generate_report()
+        # qp = QueuePipeline(test_time, build_and_deploy_time, commits, queue_size, merge_time)
+        # qp.generate_report()
+        # pipeline_reports = [ps, prt1, prt2, qp]
+        # for p in pipeline_reports:
+        #     print(p.name())
+        #     print(f"total time  {p.total_time}")
+        #     print(f"total resource time  {p.total_resource_time}")
+        #     print(f"avg time per commit  {p.avg_time_per_commit}")
+        #     print(f"avg resource time per commit  {p.avg_resource_time_per_commit}")
+        #     print("------------")
 
 
 if __name__ == '__main__':
